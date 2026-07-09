@@ -10,7 +10,20 @@ jobs:
     name: 🤖 Deploy DSI Service
     runs-on: ubuntu-latest
     steps:
-      - name: Ejecutando comandos vía SSH
+      - name: 📥 Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: 📤 Enviar archivos por SSH (SCP)
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          source: "."
+          target: "${{ secrets.PROJECT_PATH }}"
+          rm: false
+
+      - name: 🔄 Levantar / Re-construir Docker
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -18,5 +31,4 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            git pull origin main
             docker compose up -d --build
