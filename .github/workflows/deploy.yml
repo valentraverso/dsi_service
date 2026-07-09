@@ -1,0 +1,22 @@
+name: Deploy DSI Service
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: 🤖 Deploy DSI Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ejecutando comandos vía SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd ${{ secrets.PROJECT_PATH }}
+            git pull origin main
+            docker compose up -d --build
