@@ -31,4 +31,5 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            docker compose up -d --build
+            # Intentamos con la sintaxis moderna (docker compose), y si no, con la clásica (docker-compose)
+            docker compose up -d --build || docker-compose up -d --build
