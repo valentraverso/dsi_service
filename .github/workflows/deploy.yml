@@ -23,7 +23,7 @@ jobs:
           target: "${{ secrets.PROJECT_PATH }}"
           rm: false
 
-      - name: 🔄 Levantar / Re-construir Docker & Diagnóstico
+      - name: 🔄 Levantar / Re-construir Docker (Sin Compose) & Diagnóstico
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -32,8 +32,21 @@ jobs:
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             
-            # Levantar contenedores
-            docker compose up -d --build || docker-compose up -d --build
+            # 1. Detener y remover contenedor previo si existe
+            docker stop dsi_service || true
+            docker rm dsi_service || true
+            
+            # 2. Construir la imagen de Docker localmente
+            docker build -t dsi_service .
+            
+            # 3. Correr el nuevo contenedor de forma nativa sin depender de docker-compose
+            docker run -d \
+              --name dsi_service \
+              -p 4000:4000 \
+              --restart unless-stopped \
+              --shm-size=1g \
+              --env-file .env \
+              dsi_service
             
             echo "=== 1. DOCKER PROCESSES ==="
             docker ps
@@ -41,12 +54,3 @@ jobs:
             echo "=== 2. LOCAL PORT 4000 HEALTH CHECK ==="
             sleep 3
             curl -i http://localhost:4000/health || true
-            
-            echo "=== 3. NGINX STATUS ==="
-            sudo systemctl status nginx --no-pager -l || true
-            
-            echo "=== 4. NGINX CONFIG TEST ==="
-            sudo nginx -t || true
-            
-            echo "=== 5. NGINX ENABLED SITES ==="
-            ls -la /etc/nginx/sites-enabled/ || true
