@@ -57,7 +57,7 @@ async function main() {
 
     const startTime = Date.now();
 
-    const res = await fetch(`${DSI_SERVICE_URL}/api/v1/ventas/repuestos/test`, {
+    const res = await fetch(`${DSI_SERVICE_URL}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ventaPrueba),

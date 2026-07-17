@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 // Rutas
-app.use('/api/v1/ventas', ventasRouter);
+app.use('/', ventasRouter);
 
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', service: 'dsi_service' });
