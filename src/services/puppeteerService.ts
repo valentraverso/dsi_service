@@ -367,7 +367,43 @@ export class PuppeteerService {
                     console.warn('[DSI] ddlFormaDePago no encontrado en el DOM');
                     return;
                 }
-                sel.value = val;
+                
+                // Log and resolve options
+                let finalVal = val;
+                const options = Array.from(sel.options);
+                console.log('[DSI] Opciones de forma de pago disponibles en DSI:', options.map(o => `${o.value}: ${o.text}`).join(', '));
+                
+                const hasValue = options.some(o => o.value === val);
+                if (!hasValue) {
+                    // 1. Coincidencia aproximada para Mercado Pago o MP
+                    const mpOption = options.find(o => {
+                        const t = o.text.toUpperCase();
+                        return t.includes('MERCADO') || t.includes('PAGO') || t.includes('MP');
+                    });
+                    
+                    if (mpOption) {
+                        finalVal = mpOption.value;
+                        console.log(`[DSI] Forma de pago '${val}' no encontrada. Usando coincidencia por texto: '${finalVal}' (${mpOption.text})`);
+                    } else {
+                        // 2. Coincidencia aproximada para Tarjeta
+                        const cardOption = options.find(o => {
+                            const t = o.text.toUpperCase();
+                            return t.includes('TARJETA') || t.includes('DEBITO') || t.includes('CREDITO');
+                        });
+                        
+                        if (cardOption) {
+                            finalVal = cardOption.value;
+                            console.log(`[DSI] Fallback a Tarjeta/Débito: '${finalVal}' (${cardOption.text})`);
+                        } else {
+                            // 3. Fallback definitivo a Efectivo
+                            finalVal = '1';
+                            console.log(`[DSI] Usando fallback final a Efectivo ('1')`);
+                        }
+                    }
+                }
+
+                sel.value = finalVal;
+                
                 // Intentar primero con __doPostBack (ASP.NET UpdatePanel)
                 if (typeof (window as any).__doPostBack === 'function') {
                     setTimeout(() => { (window as any).__doPostBack('ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago', ''); }, 0);
