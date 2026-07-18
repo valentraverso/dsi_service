@@ -634,14 +634,27 @@ export class PuppeteerService {
             const page = await browser.newPage();
             page.setDefaultTimeout(30000);
 
-            await page.goto(DSI_LOGIN_URL, { waitUntil: 'load', timeout: 30000 });
-            await page.waitForSelector('input[name="txtUser"]', { visible: true });
+            await page.goto(DSI_LOGIN_URL, { waitUntil: 'load', timeout: 30000 }).catch(async (err: Error) => {
+                console.warn('[DSI Service] Error o timeout en page.goto a login, intentando recuperar...', err.message);
+            });
+
+            // Verificar si el form de login está presente (a pesar del error de redirect)
+            const loginInput = await page.waitForSelector('input[name="txtUser"]', { visible: true, timeout: 10000 }).catch(() => null);
+            if (!loginInput) {
+                console.warn('[DSI Service] Form de login no encontrado, intentando index.aspx directo...');
+                await page.goto(DSI_LOGIN_URL, { waitUntil: 'load', timeout: 8000 }).catch(() => null);
+                const loginInput2 = await page.waitForSelector('input[name="txtUser"]', { visible: true, timeout: 8000 }).catch(() => null);
+                if (!loginInput2) {
+                    throw new Error('No se pudo acceder al formulario de login de DSI — verificar conectividad con 52.21.150.76');
+                }
+            }
+
             await page.type('input[name="txtUser"]', dsiUser);
             await page.type('input[name="txtPass"]', dsiPass);
 
             await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle2' }),
-                page.click('input[name="btnAceptar"]')
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
+                page.click('input[name="btnAceptar"]'),
             ]);
 
             await page.goto(DSI_VENTA_URL, { waitUntil: 'networkidle2' });
