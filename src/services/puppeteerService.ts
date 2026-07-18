@@ -630,8 +630,9 @@ export class PuppeteerService {
             ],
         });
 
+        let page: Page | null = null;
         try {
-            const page = await browser.newPage();
+            page = await browser.newPage();
             page.setDefaultTimeout(30000);
 
             await page.goto(DSI_LOGIN_URL, { waitUntil: 'load', timeout: 30000 }).catch(async (err: Error) => {
@@ -676,6 +677,10 @@ export class PuppeteerService {
             }, selectName);
 
             return options || [];
+        } catch (error: any) {
+            const currentUrl = page ? page.url() : 'N/A';
+            console.error('[DSI Service] Error en getPaymentMethods:', error.message);
+            throw new Error(`[getPaymentMethods] Error en URL (${currentUrl}): ${error.message}`);
         } finally {
             await browser.close();
         }
