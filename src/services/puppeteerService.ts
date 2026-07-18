@@ -651,11 +651,11 @@ export class PuppeteerService {
             }
 
             await page.type('input[name="txtUser"]', dsiUser);
-            await page.type('input[name="txtPass"]', dsiPass);
+            await page.type('input[name="txtPassword"]', dsiPass);
 
             await Promise.all([
                 page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
-                page.click('input[name="btnAceptar"]'),
+                page.click('input[name="btnIniciar"]'),
             ]);
 
             await page.goto(DSI_VENTA_URL, { waitUntil: 'networkidle2' });
