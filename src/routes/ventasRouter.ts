@@ -5,5 +5,6 @@ const router = Router();
 
 router.post('/', VentasController.recibirVenta);
 router.post('/test', VentasController.testVentaSync); // Síncrono — para testing
+router.get('/payment-methods', VentasController.getPaymentMethods);
 
 export default router;

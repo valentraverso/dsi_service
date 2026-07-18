@@ -612,6 +612,62 @@ export class PuppeteerService {
         }
     }
 
+    public static async getPaymentMethods(): Promise<any[]> {
+        const dsiUser = process.env.DSI_USER || '';
+        const dsiPass = process.env.DSI_PASS || '';
+
+        const browser = await puppeteer.launch({
+            headless: 'shell' as any,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process,SafeBrowsing'
+            ],
+        });
+
+        try {
+            const page = await browser.newPage();
+            page.setDefaultTimeout(30000);
+
+            await page.goto(DSI_LOGIN_URL, { waitUntil: 'load', timeout: 30000 });
+            await page.waitForSelector('input[name="txtUser"]', { visible: true });
+            await page.type('input[name="txtUser"]', dsiUser);
+            await page.type('input[name="txtPass"]', dsiPass);
+
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2' }),
+                page.click('input[name="btnAceptar"]')
+            ]);
+
+            await page.goto(DSI_VENTA_URL, { waitUntil: 'networkidle2' });
+
+            await page.waitForSelector('input[name="ctl00$ContentPlaceHolder1$txtNroDoc"]', { visible: true });
+            await page.type('input[name="ctl00$ContentPlaceHolder1$txtNroDoc"]', "99999999");
+            await page.keyboard.press('Tab');
+            await PuppeteerService.wait(1000);
+
+            await page.click('input[name="ctl00$ContentPlaceHolder1$btnAceptar"]');
+            await page.waitForNetworkIdle({ idleTime: 800 }).catch(() => null);
+            await PuppeteerService.wait(1500);
+
+            const selectName = "ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago";
+            const options = await page.evaluate((name) => {
+                const sel = document.querySelector(`select[name="${name}"]`) as HTMLSelectElement;
+                if (!sel) return null;
+                return Array.from(sel.options).map((o: HTMLOptionElement) => ({ value: o.value, text: o.text }));
+            }, selectName);
+
+            return options || [];
+        } finally {
+            await browser.close();
+        }
+    }
+
     private static wait(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }

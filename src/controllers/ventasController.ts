@@ -52,4 +52,15 @@ export class VentasController {
             elapsed: `${elapsed}s`,
         });
     }
+
+    public static async getPaymentMethods(req: Request, res: Response) {
+        try {
+            console.log('[DSI Service] Obteniendo formas de pago disponibles en DSI...');
+            const options = await PuppeteerService.getPaymentMethods();
+            return res.status(200).json({ success: true, options });
+        } catch (e: any) {
+            console.error('[DSI Service] Error obteniendo formas de pago:', e);
+            return res.status(500).json({ success: false, error: e.message || String(e) });
+        }
+    }
 }
