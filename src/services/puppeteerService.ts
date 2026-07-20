@@ -521,7 +521,7 @@ export class PuppeteerService {
                 return null;
             });
 
-            if (resolvedTarjeta) {
+            if (resolvedTarjeta && resolvedFormaPago !== '106') {
                 console.log(`[DSI Service] [PASS 2] Seleccionando tarjeta nativa: ${resolvedTarjeta}`);
                 await page.select('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlTarjeta"]', resolvedTarjeta);
                 await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
