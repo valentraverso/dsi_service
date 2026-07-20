@@ -18,19 +18,19 @@ const ventaPrueba = {
     items: [
         {
             codigo: 'R6400-K92-001',
-            cantidad: 2,
+            cantidad: 1,
             precioUnitario: 20000,
         }
     ],
     formaPago: '106',   // 106 = Mercado Pago
-    montoTotal: 40000,
+    montoTotal: 20000,
     pagoData: {
         numero: '1234',
         fecha: '08/07/2026',
         nombre: 'test',
         apellido: 'test'
     },
-    sucursalId: '1',
+    sucursalId: '2',
 };
 
 async function main() {

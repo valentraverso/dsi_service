@@ -72,6 +72,30 @@ export class PuppeteerService {
             const page: Page = await browser.newPage();
             page.setDefaultTimeout(30000);
 
+            page.on('console', msg => {
+                if (msg.type() === 'error') {
+                    console.log('[DSI Browser Console Error]', msg.text());
+                }
+            });
+            page.on('pageerror', (err: any) => {
+                console.log('[DSI Browser Page Error]', err.message || err);
+            });
+            page.on('requestfailed', request => {
+                console.log('[DSI Request Failed]', request.url(), request.failure()?.errorText || '');
+            });
+            page.on('response', response => {
+                const status = response.status();
+                if (status >= 400) {
+                    console.log('[DSI HTTP Error]', response.url(), status);
+                }
+            });
+
+            // Registrar manejador de dialogos (alert, confirm, prompt)
+            page.on('dialog', async dialog => {
+                console.log(`[DSI Dialog] Tipo: ${dialog.type()}, Mensaje: ${dialog.message()}`);
+                await dialog.accept().catch(() => null);
+            });
+
             // =============================================
             // 1. LOGIN
             // =============================================
@@ -334,14 +358,56 @@ export class PuppeteerService {
                     }
                 }
 
-                // --- 4e. Click en "Precio Venta" → agrega el ítem al carrito ---
-                try {
-                    await btnPrecio.click();
-                } catch {
-                    await page.evaluate(() => {
-                        const btn = document.querySelector<HTMLInputElement>('input[name*="btnPrecioVenta"]');
-                        if (btn) btn.click();
+                // --- 4e. Click en "Precio Venta" correspondiente a nuestra sucursal activa ---
+                const activeSucursalName = await page.evaluate(() => {
+                    const headerEl = document.querySelector('.navbar, #header, .header, td[align="right"]');
+                    if (headerEl) {
+                        const text = headerEl.textContent || '';
+                        const match = text.match(/\(([^)]+)\)/);
+                        if (match) return match[1].trim();
+                    }
+                    const bodyText = document.body.textContent || '';
+                    const match2 = bodyText.match(/Valentino Traverso \(([^)]+)\)/i);
+                    return match2 ? match2[1].trim() : 'SANTA FE_HONDA';
+                });
+                console.log(`[DSI Service] Sucursal activa detectada para click: ${activeSucursalName}`);
+
+                const clicked = await page.evaluate((sucName) => {
+                    const table = document.querySelector('table[id*="dgInventario"]');
+                    if (!table) return false;
+                    
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    const dataRows = rows.filter(r => r.querySelector('input[name*="btnPrecioVenta"]'));
+                    
+                    let targetRow = dataRows.find(r => {
+                        const text = r.textContent.toUpperCase();
+                        return text.includes(sucName.toUpperCase());
                     });
+                    
+                    if (!targetRow && dataRows.length > 0) {
+                        targetRow = dataRows[0]; // fallback al primero
+                    }
+                    
+                    if (targetRow) {
+                        const btn = targetRow.querySelector<HTMLInputElement>('input[name*="btnPrecioVenta"]');
+                        if (btn) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }, activeSucursalName);
+
+                if (!clicked) {
+                    console.warn(`[DSI Service] No se pudo hacer click en btnPrecioVenta de forma específica, intentando fallback...`);
+                    try {
+                        if (btnPrecio) await btnPrecio.click();
+                    } catch {
+                        await page.evaluate(() => {
+                            const btn = document.querySelector<HTMLInputElement>('input[name*="btnPrecioVenta"]');
+                            if (btn) btn.click();
+                        });
+                    }
                 }
 
                 // Esperar a que el AJAX de agregar ítem complete (actualiza el grid y saldos)
@@ -351,99 +417,130 @@ export class PuppeteerService {
             }
 
             // =============================================
-            // 5. FORMA DE PAGO
+            // 5. DOUBLE-PASS SAVE PATTERN (PASS 1: SAVE UNPAID)
             // =============================================
-            // PROBLEMA RAÍZ CORREGIDO: ASP.NET UpdatePanel NO responde a dispatchEvent('change').
-            // Para disparar el postback del servidor (que habilita los campos de pago), se debe
-            // llamar directamente a __doPostBack() que es el mecanismo interno de ASP.NET.
-            // =============================================
-            const formaPagoVal = ventaData.formaPago ?? '1';
-            console.log(`[DSI Service] Configurando forma de pago: ${formaPagoVal}`);
-
-            // 5a. Seleccionar Forma de Pago y disparar el postback de ASP.NET
-            await page.evaluate((val: string) => {
-                const sel = document.querySelector<HTMLSelectElement>('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago"]');
-                if (!sel) {
-                    console.warn('[DSI] ddlFormaDePago no encontrado en el DOM');
-                    return;
-                }
-                
-                // Log and resolve options
-                let finalVal = val;
-                const options = Array.from(sel.options);
-                console.log('[DSI] Opciones de forma de pago disponibles en DSI:', options.map(o => `${o.value}: ${o.text}`).join(', '));
-                
-                const hasValue = options.some(o => o.value === val);
-                if (!hasValue) {
-                    // 1. Coincidencia aproximada para Mercado Pago o MP
-                    const mpOption = options.find(o => {
-                        const t = o.text.toUpperCase();
-                        return t.includes('MERCADO') || t.includes('PAGO') || t.includes('MP');
-                    });
-                    
-                    if (mpOption) {
-                        finalVal = mpOption.value;
-                        console.log(`[DSI] Forma de pago '${val}' no encontrada. Usando coincidencia por texto: '${finalVal}' (${mpOption.text})`);
-                    } else {
-                        // 2. Coincidencia aproximada para Tarjeta
-                        const cardOption = options.find(o => {
-                            const t = o.text.toUpperCase();
-                            return t.includes('TARJETA') || t.includes('DEBITO') || t.includes('CREDITO');
-                        });
-                        
-                        if (cardOption) {
-                            finalVal = cardOption.value;
-                            console.log(`[DSI] Fallback a Tarjeta/Débito: '${finalVal}' (${cardOption.text})`);
-                        } else {
-                            // 3. Fallback definitivo a Efectivo
-                            finalVal = '1';
-                            console.log(`[DSI] Usando fallback final a Efectivo ('1')`);
-                        }
-                    }
-                }
-
-                sel.value = finalVal;
-                
-                // Intentar primero con __doPostBack (ASP.NET UpdatePanel)
-                if (typeof (window as any).__doPostBack === 'function') {
-                    setTimeout(() => { (window as any).__doPostBack('ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago', ''); }, 0);
-                } else {
-                    // Fallback: event nativo
-                    sel.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            }, formaPagoVal);
-
-            // Esperar a que inicie el postback disparado por setTimeout
-            await PuppeteerService.wait(500);
-            // Esperar a que el UpdatePanel recargue los campos del medio de pago
-            await page.waitForNetworkIdle({ idleTime: 1000, timeout: 20000 }).catch(() => null);
-            await PuppeteerService.wait(1500);
-
-            // 5b. Seleccionar Concepto (también puede disparar postback en algunos casos)
+            console.log('[DSI Service] [PASS 1] Desmarcando cbFacturar para guardar venta impaga...');
             await page.evaluate(() => {
-                const sel = document.querySelector<HTMLSelectElement>('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlConcepto"]');
-                if (!sel) return;
-                sel.value = '1';
-                if (typeof (window as any).__doPostBack === 'function') {
-                    setTimeout(() => { (window as any).__doPostBack('ctl00$ContentPlaceHolder1$wbPagos$ddlConcepto', ''); }, 0);
-                } else {
-                    sel.dispatchEvent(new Event('change', { bubbles: true }));
+                const cb = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$cbFacturar"]');
+                if (cb) {
+                    cb.checked = false;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             });
             await PuppeteerService.wait(500);
-            await page.waitForNetworkIdle({ idleTime: 800, timeout: 10000 }).catch(() => null);
-            await PuppeteerService.wait(800);
 
-            // 5c. Completar campos adicionales del medio de pago (transacción, fecha, titular)
+            console.log('[DSI Service] [PASS 1] Guardando venta impaga...');
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
+                page.click('input[name="ctl00$ContentPlaceHolder1$btnGuardar"]'),
+            ]);
+
+            const pass1Url = page.url();
+            console.log(`[DSI Service] [PASS 1] URL post-guardado: ${pass1Url}`);
+
+            // Verificar si hubo error en el primer guardado
+            if (pass1Url.includes('frmVentaA.aspx')) {
+                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/post_save_error.png", fullPage: true }).catch(() => null);
+                const validationErrors = await page.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('span, div, label, td'));
+                    return elements
+                        .filter(el => {
+                            const style = window.getComputedStyle(el);
+                            const isRed = style.color === 'rgb(255, 0, 0)' || style.color === 'red' || el.getAttribute('color') === 'Red';
+                            const isVisible = style.display !== 'none' && style.visibility !== 'hidden';
+                            return isRed && isVisible && el.textContent.trim().length > 0;
+                        })
+                        .map(el => el.textContent.trim().replace(/\s+/g, ' '));
+                });
+                const errMsg = validationErrors.length > 0 
+                    ? `Error de validación DSI [PASS 1]: ${validationErrors.join(' | ')}`
+                    : 'La venta impaga no se guardó (la página no redirigió)';
+                throw new Error(errMsg);
+            }
+
+            const match = pass1Url.match(/numero_venta=(\d+)/);
+            if (!match) {
+                throw new Error(`[DSI Service] No se pudo obtener el número de venta del primer paso. URL final: ${pass1Url}`);
+            }
+            const saleId = match[1];
+            console.log(`[DSI Service] [PASS 1] Venta impaga guardada con ID: ${saleId}`);
+
+            // =============================================
+            // 6. DOUBLE-PASS SAVE PATTERN (PASS 2: REGISTER PAYMENT)
+            // =============================================
+            console.log(`[DSI Service] [PASS 2] Abriendo venta ${saleId} en modo edición (origen=1)...`);
+            await page.goto(`http://52.21.150.76/concesionario/Productos/Venta/frmVentaA.aspx?origen=1&id_venta=${saleId}`, { waitUntil: 'networkidle2' });
+            await PuppeteerService.wait(2000);
+
+            const formaPagoVal = ventaData.formaPago ?? '1';
+            console.log(`[DSI Service] [PASS 2] Configurando forma de pago: ${formaPagoVal}`);
+
+            // Seleccionar Forma de Pago
+            const resolvedFormaPago = await page.evaluate((val: string) => {
+                const sel = document.querySelector<HTMLSelectElement>('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago"]');
+                if (!sel) return '1';
+                const options = Array.from(sel.options);
+                const hasValue = options.some(o => o.value === val);
+                if (hasValue) return val;
+                
+                const mpOption = options.find(o => {
+                    const t = o.text.toUpperCase();
+                    return t.includes('MERCADO') || t.includes('PAGO') || t.includes('MP');
+                });
+                if (mpOption) return mpOption.value;
+
+                const cardOption = options.find(o => {
+                    const t = o.text.toUpperCase();
+                    return t.includes('TARJETA') || t.includes('DEBITO') || t.includes('CREDITO');
+                });
+                if (cardOption) return cardOption.value;
+
+                return '1';
+            }, formaPagoVal);
+
+            console.log(`[DSI Service] [PASS 2] Seleccionando forma de pago nativa: ${resolvedFormaPago}`);
+            await page.select('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago"]', resolvedFormaPago);
+            await PuppeteerService.wait(1000);
+            await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
+            await PuppeteerService.wait(1500);
+
+            // Seleccionar Concepto si está disponible
+            const hasConcepto = await page.evaluate(() => !!document.querySelector('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlConcepto"]'));
+            if (hasConcepto) {
+                await page.select('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlConcepto"]', '1');
+                await PuppeteerService.wait(500);
+            }
+
+            // Seleccionar Tarjeta y Plazo si están presentes
+            const resolvedTarjeta = await page.evaluate(() => {
+                const ddlTarjeta = document.querySelector<HTMLSelectElement>('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlTarjeta"]');
+                if (ddlTarjeta && ddlTarjeta.options.length > 1) {
+                    const validOption = Array.from(ddlTarjeta.options).find(o => o.value !== '100' && o.value !== '');
+                    return validOption ? validOption.value : null;
+                }
+                return null;
+            });
+
+            if (resolvedTarjeta) {
+                console.log(`[DSI Service] [PASS 2] Seleccionando tarjeta nativa: ${resolvedTarjeta}`);
+                await page.select('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlTarjeta"]', resolvedTarjeta);
+                await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
+                await PuppeteerService.wait(1500);
+            }
+
+            // Rellenar datos adicionales del pago de forma robusta
             const pagoData = ventaData.pagoData ?? {};
             const today = new Date();
             const defaultDate = `${today.getDate().toString().padStart(2, '0')}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getFullYear()}`;
+            const montoAPagar = ventaData.montoTotal ? ventaData.montoTotal.toFixed(2).replace('.', ',') : '0,00';
 
+            console.log(`[DSI Service] [PASS 2] Completando campos de pago en el cliente (Monto: ${montoAPagar})...`);
             await page.evaluate((
                 data: { numero?: string; fecha?: string; nombre?: string; apellido?: string },
                 defDate: string,
                 clienteNombre: string,
-                clienteApellido: string
+                clienteApellido: string,
+                monto: string
             ) => {
                 const setVal = (selector: string, val: string) => {
                     const el = document.querySelector<HTMLInputElement>(selector);
@@ -455,66 +552,22 @@ export class PuppeteerService {
                         el.dispatchEvent(new Event('blur', { bubbles: true }));
                     }
                 };
+                setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtPlazo"]', '1');
+                setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtNumeroTarjeta"]', '1234');
+                setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtNumeroCupon"]', data.numero ?? '123456');
                 setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtNumTransaccion"]', data.numero ?? '000000');
                 setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtFechaVencimiento"]', data.fecha ?? defDate);
                 setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtFechaPago"]', data.fecha ?? defDate);
                 setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtNombre"]', data.nombre ?? clienteNombre);
                 setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtApellido"]', data.apellido ?? clienteApellido);
-            }, pagoData, defaultDate, ventaData.cliente.nombre, ventaData.cliente.apellido ?? '');
-            await PuppeteerService.wait(500);
+                setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtNro_Doc"]', '99999999');
+                setVal('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtMonto"]', monto);
+            }, pagoData, defaultDate, ventaData.cliente.nombre, ventaData.cliente.apellido ?? '', montoAPagar);
 
-            // =============================================
-            // 5d. Determinar monto total a pagar
-            // =============================================
-            let montoAPagar: string;
+            await PuppeteerService.wait(1000);
 
-            if (ventaData.montoTotal !== undefined) {
-                montoAPagar = ventaData.montoTotal.toFixed(2).replace('.', ',');
-                console.log(`[DSI Service] Usando monto explícito: ${montoAPagar}`);
-            } else {
-                // Leer el saldo calculado por DSI
-                const saldoValidar = await page.evaluate(() => {
-                    const el = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$txtSaldoValidar"]');
-                    return el ? el.value.trim() : '';
-                });
-                // El saldo validar puede venir como número negativo (ej. "-1500,00") indicando monto adeudado
-                const saldoClean = saldoValidar.replace(/[^\d,.-]/g, '');
-                montoAPagar = saldoClean.startsWith('-') ? saldoClean.slice(1) : saldoClean;
-                console.log(`[DSI Service] Saldo calculado por DSI: raw="${saldoValidar}" → monto="${montoAPagar}"`);
-
-                if (!montoAPagar || montoAPagar === '0' || montoAPagar === '0,00') {
-                    console.warn('[DSI Service] ⚠ Saldo calculado es 0 o vacío — verificar que los ítems se agregaron correctamente');
-                }
-            }
-
-            // Setear el monto en el campo de pago con interacción real
-            const MONTO_SEL = 'input[name="ctl00$ContentPlaceHolder1$wbPagos$txtMonto"]';
-            const montoField = await page.$(MONTO_SEL);
-            let montoSeteadoOk = false;
-            if (montoField) {
-                try {
-                    await montoField.click({ count: 3 });
-                    await montoField.type(montoAPagar, { delay: 50 });
-                    await page.keyboard.press('Tab');
-                    await PuppeteerService.wait(500);
-                    montoSeteadoOk = true;
-                } catch (e) {
-                    console.warn('[DSI Service] Falló click interactivo en montoField, usando evaluate...');
-                }
-            }
-            if (!montoSeteadoOk) {
-                // Fallback evaluate
-                await page.evaluate((monto: string) => {
-                    const el = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtMonto"]');
-                    if (el) { el.value = monto; el.dispatchEvent(new Event('change', { bubbles: true })); }
-                }, montoAPagar);
-                await PuppeteerService.wait(500);
-            }
-
-            // =============================================
-            // 6. AGREGAR PAGO
-            // =============================================
-            console.log(`[DSI Service] Haciendo click en Agregar Pago (monto: ${montoAPagar})...`);
+            // Clic en Agregar Pago
+            console.log('[DSI Service] [PASS 2] Haciendo click en Agregar Pago...');
             try {
                 await page.click('input[name="ctl00$ContentPlaceHolder1$btnAgregarPago"]');
             } catch {
@@ -523,84 +576,54 @@ export class PuppeteerService {
                     if (btn) btn.click();
                 });
             }
-            await page.waitForNetworkIdle({ idleTime: 1000, timeout: 20000 }).catch(() => null);
+            await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
             await PuppeteerService.wait(2000);
 
-            // Verificar saldo restante después del primer pago
+            // Verificar si el saldo se actualizó a 0
             const saldoFinal = await page.evaluate(() => {
-                const el = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$txtSaldoValidar"]');
-                return el ? el.value.trim() : '0';
+                const el = document.querySelector('span[id*="lblSaldoA"]');
+                return el ? el.textContent.trim() : 'no-saldo';
             });
-            console.log(`[DSI Service] Saldo después de Agregar Pago: ${saldoFinal}`);
+            console.log(`[DSI Service] [PASS 2] Saldo post-pago: ${saldoFinal}`);
 
-            // Si quedó saldo pendiente, agregar un segundo pago por el saldo restante
-            if (saldoFinal && saldoFinal !== '0' && saldoFinal !== '0,00') {
-                const saldoNum = parseFloat(saldoFinal.replace(/\./g, '').replace(',', '.'));
-                if (!isNaN(saldoNum) && saldoNum < 0) {
-                    const saldoRestante = Math.abs(saldoNum).toFixed(2).replace('.', ',');
-                    console.log(`[DSI Service] Saldo pendiente detectado: ${saldoRestante} — agregando pago complementario...`);
-
-                    const montoField2 = await page.$(MONTO_SEL);
-                    let montoSeteadoOk2 = false;
-                    if (montoField2) {
-                        try {
-                            await montoField2.click({ count: 3 });
-                            await montoField2.type(saldoRestante, { delay: 50 });
-                            await page.keyboard.press('Tab');
-                            await PuppeteerService.wait(400);
-                            montoSeteadoOk2 = true;
-                        } catch (e) {
-                            console.warn('[DSI Service] Falló click interactivo en montoField2, usando evaluate...');
-                        }
-                    }
-                    if (!montoSeteadoOk2) {
-                        await page.evaluate((monto: string) => {
-                            const el = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$wbPagos$txtMonto"]');
-                            if (el) { el.value = monto; el.dispatchEvent(new Event('change', { bubbles: true })); }
-                        }, saldoRestante);
-                        await PuppeteerService.wait(400);
-                    }
-
-                    try {
-                        await page.click('input[name="ctl00$ContentPlaceHolder1$btnAgregarPago"]');
-                    } catch {
-                        await page.evaluate(() => {
-                            const btn = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$btnAgregarPago"]');
-                            if (btn) btn.click();
-                        });
-                    }
-                    await page.waitForNetworkIdle({ idleTime: 1000, timeout: 15000 }).catch(() => null);
-                    await PuppeteerService.wait(1500);
-
-                    const saldoFinal2 = await page.evaluate(() => {
-                        const el = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$txtSaldoValidar"]');
-                        return el ? el.value.trim() : '0';
-                    });
-                    console.log(`[DSI Service] Saldo después del pago complementario: ${saldoFinal2}`);
-                }
+            // Guardar venta saldada clickeando btnModificar
+            console.log('[DSI Service] [PASS 2] Guardando venta saldada...');
+            try {
+                await Promise.all([
+                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
+                    page.click('input[name="ctl00$ContentPlaceHolder1$btnModificar"]')
+                ]);
+            } catch {
+                await page.evaluate(() => {
+                    const btn = document.querySelector<HTMLInputElement>('input[name="ctl00$ContentPlaceHolder1$btnModificar"]');
+                    if (btn) btn.click();
+                });
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null);
             }
-
-            // =============================================
-            // 7. GUARDAR
-            // =============================================
-            console.log('[DSI Service] Guardando la venta...');
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
-                page.click('input[name="ctl00$ContentPlaceHolder1$btnGuardar"]'),
-            ]);
 
             const finalUrl = page.url();
-            console.log(`[DSI Service] URL final: ${finalUrl}`);
+            console.log(`[DSI Service] [PASS 2] URL final: ${finalUrl}`);
 
-            if (finalUrl.includes('Capturar_Error.aspx')) {
-                const errorParam = (() => {
-                    try { return new URL(finalUrl).searchParams.get('Error') ?? 'Error desconocido'; }
-                    catch { return finalUrl; }
-                })();
-                throw new Error(`DSI devolvió error al guardar: ${errorParam}`);
+            if (finalUrl.includes('frmVentaA.aspx')) {
+                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/post_save_error.png", fullPage: true }).catch(() => null);
+                const validationErrors = await page.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('span, div, label, td'));
+                    return elements
+                        .filter(el => {
+                            const style = window.getComputedStyle(el);
+                            const isRed = style.color === 'rgb(255, 0, 0)' || style.color === 'red' || el.getAttribute('color') === 'Red';
+                            const isVisible = style.display !== 'none' && style.visibility !== 'hidden';
+                            return isRed && isVisible && el.textContent.trim().length > 0;
+                        })
+                        .map(el => el.textContent.trim().replace(/\s+/g, ' '));
+                });
+                const errMsg = validationErrors.length > 0 
+                    ? `Error de validación DSI [PASS 2]: ${validationErrors.join(' | ')}`
+                    : 'La venta saldada no se guardó (la página no redirigió)';
+                throw new Error(errMsg);
             }
 
-            console.log('[DSI Service] ✅ Venta guardada exitosamente.');
+            console.log('[DSI Service] ✅ Venta guardada y saldada exitosamente.');
             return { status: true, msg: `Venta procesada correctamente. URL final: ${finalUrl}` };
 
         } catch (error: any) {
@@ -660,8 +683,8 @@ export class PuppeteerService {
 
             await page.goto(DSI_VENTA_URL, { waitUntil: 'networkidle2' });
 
-            await page.waitForSelector('input[name="ctl00$ContentPlaceHolder1$txtNroDoc"]', { visible: true });
-            await page.type('input[name="ctl00$ContentPlaceHolder1$txtNroDoc"]', "99999999");
+            await page.waitForSelector('input[name="ctl00$ContentPlaceHolder1$txtNumDocumento"]', { visible: true });
+            await page.type('input[name="ctl00$ContentPlaceHolder1$txtNumDocumento"]', "99999999");
             await page.keyboard.press('Tab');
             await PuppeteerService.wait(1000);
 
@@ -679,6 +702,9 @@ export class PuppeteerService {
             return options || [];
         } catch (error: any) {
             const currentUrl = page ? page.url() : 'N/A';
+            if (page) {
+                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/dsi_error_screenshot.png", fullPage: true }).catch(() => null);
+            }
             console.error('[DSI Service] Error en getPaymentMethods:', error.message);
             throw new Error(`[getPaymentMethods] Error en URL (${currentUrl}): ${error.message}`);
         } finally {
