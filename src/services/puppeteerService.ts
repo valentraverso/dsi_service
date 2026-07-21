@@ -657,7 +657,7 @@ export class PuppeteerService {
                 processName: "DSI_PROCESAMIENTO_PUPPETEER",
                 category: "DSI",
                 status: "failed",
-                input: { orderId, mlOrderId: ventaData.mlOrderId },
+                input: { orderId, mlOrderId: ventaData.mlOrderId, cliente: ventaData.cliente, items: ventaData.items, montoTotal: ventaData.montoTotal },
                 error: errorMsg,
                 durationMs: Date.now() - startTime
             });
