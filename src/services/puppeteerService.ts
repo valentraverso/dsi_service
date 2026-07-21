@@ -642,7 +642,7 @@ export class PuppeteerService {
                 category: "DSI",
                 status: "success",
                 input: { orderId },
-                output: { msg: successMsg, finalUrl },
+                output: { msg: successMsg, finalUrl, dsiSaleId: saleId },
                 durationMs: Date.now() - startTime
             });
 
