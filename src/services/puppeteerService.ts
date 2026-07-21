@@ -21,6 +21,7 @@ export interface ClienteVenta {
 }
 
 export interface VentaRepuestosData {
+    mlOrderId?: string;        // ID de la orden de Mercado Libre (para tracking en notificaciones de vuelta al backend)
     cliente: ClienteVenta;
     items: ItemVenta[];
     formaPago?: string;        // '1' = Efectivo (default), '106' = Mercado Pago
@@ -42,7 +43,7 @@ export class PuppeteerService {
      */
     public static async procesarVentaRepuestos(ventaData: VentaRepuestosData): Promise<{ status: boolean; msg: string }> {
         const startTime = Date.now();
-        const orderId = ventaData.pagoData?.numero || "S/N";
+        const orderId = ventaData.mlOrderId || ventaData.pagoData?.numero || "S/N";
         console.log('[DSI Service] Iniciando venta con Puppeteer:', JSON.stringify(ventaData, null, 2));
 
         // Notificar inicio de Puppeteer al backend central
@@ -50,7 +51,7 @@ export class PuppeteerService {
             processName: "DSI_PROCESAMIENTO_PUPPETEER",
             category: "DSI",
             status: "in_progress",
-            input: { orderId, cliente: ventaData.cliente, items: ventaData.items, montoTotal: ventaData.montoTotal }
+            input: { orderId, mlOrderId: ventaData.mlOrderId, cliente: ventaData.cliente, items: ventaData.items, montoTotal: ventaData.montoTotal }
         });
 
         const dsiUser = process.env.DSI_USER || '';
@@ -641,7 +642,7 @@ export class PuppeteerService {
                 processName: "DSI_PROCESAMIENTO_PUPPETEER",
                 category: "DSI",
                 status: "success",
-                input: { orderId },
+                input: { orderId, mlOrderId: ventaData.mlOrderId },
                 output: { msg: successMsg, finalUrl, dsiSaleId: saleId },
                 durationMs: Date.now() - startTime
             });
@@ -656,7 +657,7 @@ export class PuppeteerService {
                 processName: "DSI_PROCESAMIENTO_PUPPETEER",
                 category: "DSI",
                 status: "failed",
-                input: { orderId },
+                input: { orderId, mlOrderId: ventaData.mlOrderId },
                 error: errorMsg,
                 durationMs: Date.now() - startTime
             });
