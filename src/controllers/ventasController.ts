@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { taskQueue } from '../queue/memoryQueue';
 import { PuppeteerService, VentaRepuestosData } from '../services/puppeteerService';
+import { NotificationService } from '../services/notificationService';
 
 export class VentasController {
 
@@ -12,6 +13,19 @@ export class VentasController {
         if (!ventaData.cliente?.documento) return res.status(400).json({ error: 'Faltan datos del cliente (documento es obligatorio)' });
         if (!ventaData.items || !Array.isArray(ventaData.items) || ventaData.items.length === 0) return res.status(400).json({ error: 'Falta el array de items o está vacío' });
         if (!ventaData.formaPago) ventaData.formaPago = '1';
+
+        // Notificar entrada al servicio (en cola)
+        NotificationService.notifyBackend({
+            processName: "DSI_RECEPCION_VENTA",
+            category: "DSI",
+            status: "in_progress",
+            input: {
+                orderId: ventaData.pagoData?.numero,
+                clienteDocumento: ventaData.cliente.documento,
+                itemsCount: ventaData.items.length,
+                montoTotal: ventaData.montoTotal
+            }
+        });
 
         taskQueue.enqueue(async () => {
             const result = await PuppeteerService.procesarVentaRepuestos(ventaData);

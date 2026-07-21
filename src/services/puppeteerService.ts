@@ -1,4 +1,5 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
+import { NotificationService } from './notificationService';
 
 const DSI_BASE = 'http://52.21.150.76/concesionario';
 const DSI_LOGIN_URL = `${DSI_BASE}/index.aspx`;
@@ -40,7 +41,17 @@ export class PuppeteerService {
      * evitando los problemas de ViewState / EVENTVALIDATION del enfoque HTTP.
      */
     public static async procesarVentaRepuestos(ventaData: VentaRepuestosData): Promise<{ status: boolean; msg: string }> {
+        const startTime = Date.now();
+        const orderId = ventaData.pagoData?.numero || "S/N";
         console.log('[DSI Service] Iniciando venta con Puppeteer:', JSON.stringify(ventaData, null, 2));
+
+        // Notificar inicio de Puppeteer al backend central
+        NotificationService.notifyBackend({
+            processName: "DSI_PROCESAMIENTO_PUPPETEER",
+            category: "DSI",
+            status: "in_progress",
+            input: { orderId, cliente: ventaData.cliente, items: ventaData.items, montoTotal: ventaData.montoTotal }
+        });
 
         const dsiUser = process.env.DSI_USER || '';
         const dsiPass = process.env.DSI_PASS || '';
@@ -624,11 +635,33 @@ export class PuppeteerService {
             }
 
             console.log('[DSI Service] ✅ Venta guardada y saldada exitosamente.');
-            return { status: true, msg: `Venta procesada correctamente. URL final: ${finalUrl}` };
+            const successMsg = `Venta procesada correctamente. URL final: ${finalUrl}`;
+            
+            NotificationService.notifyBackend({
+                processName: "DSI_PROCESAMIENTO_PUPPETEER",
+                category: "DSI",
+                status: "success",
+                input: { orderId },
+                output: { msg: successMsg, finalUrl },
+                durationMs: Date.now() - startTime
+            });
+
+            return { status: true, msg: successMsg };
 
         } catch (error: any) {
             console.error('[DSI Service] Error en Puppeteer:', error.message);
-            return { status: false, msg: error.message ?? 'Error desconocido' };
+            const errorMsg = error.message ?? 'Error desconocido';
+
+            NotificationService.notifyBackend({
+                processName: "DSI_PROCESAMIENTO_PUPPETEER",
+                category: "DSI",
+                status: "failed",
+                input: { orderId },
+                error: errorMsg,
+                durationMs: Date.now() - startTime
+            });
+
+            return { status: false, msg: errorMsg };
         } finally {
             await browser.close();
             console.log('[DSI Service] Navegador cerrado.');
