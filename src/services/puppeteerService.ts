@@ -384,20 +384,36 @@ export class PuppeteerService {
                 });
                 console.log(`[DSI Service] Sucursal activa detectada para click: ${activeSucursalName}`);
 
-                const clicked = await page.evaluate((sucName) => {
+                const clicked = await page.evaluate((sucName, itemCode) => {
                     const table = document.querySelector('table[id*="dgInventario"]');
                     if (!table) return false;
                     
                     const rows = Array.from(table.querySelectorAll('tr'));
                     const dataRows = rows.filter(r => r.querySelector('input[name*="btnPrecioVenta"]'));
                     
+                    // Buscar fila que corresponda al código exacto y a la sucursal
                     let targetRow = dataRows.find(r => {
                         const text = r.textContent.toUpperCase();
-                        return text.includes(sucName.toUpperCase());
+                        if (!text.includes(sucName.toUpperCase())) return false;
+                        
+                        const tds = Array.from(r.querySelectorAll('td'));
+                        return tds.some(td => {
+                            const tdText = (td.textContent || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+                            const cleanCode = itemCode.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+                            return tdText === cleanCode;
+                        });
                     });
                     
                     if (!targetRow && dataRows.length > 0) {
-                        targetRow = dataRows[0]; // fallback al primero
+                        // Fallback: si no encontramos el código exacto con la sucursal, buscar al menos uno que coincida con la sucursal
+                        targetRow = dataRows.find(r => {
+                            const text = r.textContent.toUpperCase();
+                            return text.includes(sucName.toUpperCase());
+                        });
+                    }
+                    
+                    if (!targetRow && dataRows.length > 0) {
+                        targetRow = dataRows[0]; // fallback definitivo al primero
                     }
                     
                     if (targetRow) {
@@ -408,7 +424,7 @@ export class PuppeteerService {
                         }
                     }
                     return false;
-                }, activeSucursalName);
+                }, activeSucursalName, item.codigo.toUpperCase());
 
                 if (!clicked) {
                     console.warn(`[DSI Service] No se pudo hacer click en btnPrecioVenta de forma específica, intentando fallback...`);
