@@ -44,6 +44,7 @@ export class PuppeteerService {
     public static async procesarVentaRepuestos(ventaData: VentaRepuestosData): Promise<{ status: boolean; msg: string }> {
         const startTime = Date.now();
         const orderId = ventaData.mlOrderId || ventaData.pagoData?.numero || "S/N";
+        let lastAlertMessage: string | null = null;
         console.log('[DSI Service] Iniciando venta con Puppeteer:', JSON.stringify(ventaData, null, 2));
 
         // Notificar inicio de Puppeteer al backend central
@@ -104,7 +105,9 @@ export class PuppeteerService {
 
             // Registrar manejador de dialogos (alert, confirm, prompt)
             page.on('dialog', async dialog => {
-                console.log(`[DSI Dialog] Tipo: ${dialog.type()}, Mensaje: ${dialog.message()}`);
+                const msg = dialog.message();
+                console.log(`[DSI Dialog] Tipo: ${dialog.type()}, Mensaje: ${msg}`);
+                lastAlertMessage = msg;
                 await dialog.accept().catch(() => null);
             });
 
@@ -441,6 +444,17 @@ export class PuppeteerService {
                 // Esperar a que el AJAX de agregar ítem complete (actualiza el grid y saldos)
                 await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
                 await PuppeteerService.wait(1500);
+
+                if (lastAlertMessage) {
+                    const msg = lastAlertMessage;
+                    lastAlertMessage = null; // reset
+                    const lowerMsg = msg.toLowerCase();
+                    if (lowerMsg.includes('stock') || lowerMsg.includes('insuficiente') || lowerMsg.includes('saldo') || lowerMsg.includes('cantidad') || lowerMsg.includes('no hay') || lowerMsg.includes('disponible')) {
+                        throw new Error(`no hay stock en DSI: ${msg}`);
+                    }
+                    throw new Error(`Error en DSI: ${msg}`);
+                }
+
                 console.log(`[DSI Service] ✓ Ítem ${item.codigo} x${item.cantidad} agregado al carrito`);
             }
 
