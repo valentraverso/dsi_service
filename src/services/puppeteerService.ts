@@ -482,7 +482,7 @@ export class PuppeteerService {
 
             // Verificar si hubo error en el primer guardado
             if (pass1Url.includes('frmVentaA.aspx')) {
-                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/post_save_error.png", fullPage: true }).catch(() => null);
+                await page.screenshot({ path: "./screenshot_pass1_error.png", fullPage: true }).catch(() => null);
                 const validationErrors = await page.evaluate(() => {
                     const elements = Array.from(document.querySelectorAll('span, div, label, td'));
                     return elements
@@ -563,7 +563,17 @@ export class PuppeteerService {
                 return null;
             });
 
-            if (resolvedTarjeta && resolvedFormaPago !== '106') {
+            // Verificar si la forma de pago seleccionada es Mercado Pago (o similar) por su texto para no tocar la tarjeta
+            const isMercadoPago = await page.evaluate((val: string) => {
+                const sel = document.querySelector<HTMLSelectElement>('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlFormaDePago"]');
+                if (!sel) return false;
+                const opt = Array.from(sel.options).find(o => o.value === val);
+                if (!opt) return false;
+                const txt = opt.text.toUpperCase();
+                return txt.includes('MERCADO') || txt.includes('PAGO') || txt.includes('MP') || val === '106';
+            }, resolvedFormaPago);
+
+            if (resolvedTarjeta && !isMercadoPago) {
                 console.log(`[DSI Service] [PASS 2] Seleccionando tarjeta nativa: ${resolvedTarjeta}`);
                 await page.select('select[name="ctl00$ContentPlaceHolder1$wbPagos$ddlTarjeta"]', resolvedTarjeta);
                 await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => null);
@@ -647,7 +657,7 @@ export class PuppeteerService {
             console.log(`[DSI Service] [PASS 2] URL final: ${finalUrl}`);
 
             if (finalUrl.includes('frmVentaA.aspx')) {
-                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/post_save_error.png", fullPage: true }).catch(() => null);
+                await page.screenshot({ path: "./screenshot_pass2_error.png", fullPage: true }).catch(() => null);
                 const validationErrors = await page.evaluate(() => {
                     const elements = Array.from(document.querySelectorAll('span, div, label, td'));
                     return elements
@@ -767,7 +777,7 @@ export class PuppeteerService {
         } catch (error: any) {
             const currentUrl = page ? page.url() : 'N/A';
             if (page) {
-                await page.screenshot({ path: "C:/Users/vt200/.gemini/antigravity-cli/brain/eaf487c8-9d5f-4fe7-b207-669aaeb22a7d/dsi_error_screenshot.png", fullPage: true }).catch(() => null);
+                await page.screenshot({ path: "./screenshot_dsi_error.png", fullPage: true }).catch(() => null);
             }
             console.error('[DSI Service] Error en getPaymentMethods:', error.message);
             throw new Error(`[getPaymentMethods] Error en URL (${currentUrl}): ${error.message}`);
