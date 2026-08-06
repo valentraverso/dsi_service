@@ -4,3 +4,6 @@ dist/
 .cache/
 .DS_Store
 *.log
+
+# Tests Discovery
+test/discovery/

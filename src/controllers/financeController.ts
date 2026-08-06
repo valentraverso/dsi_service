@@ -20,13 +20,13 @@ export const handleCreditechPreapproval = async (req: Request, res: Response): P
 
 export const handleCreditoArgentinoPreapproval = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { dni, gender, user, pass } = req.body;
+        const { dni, gender, user, pass, phone } = req.body;
         if (!dni) {
             res.status(400).json({ approved: false, msg: 'DNI es requerido.' });
             return;
         }
 
-        const result = await creditoArgentinoService.getPreapproval(dni, gender || 'M', user, pass);
+        const result = await creditoArgentinoService.getPreapproval(dni, gender || 'M', user, pass, phone);
         res.status(200).json(result);
     } catch (error: any) {
         res.status(500).json({ approved: false, msg: error.message || 'Error en dsi_service Crédito Argentino' });

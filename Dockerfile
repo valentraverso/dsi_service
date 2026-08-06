@@ -20,6 +20,6 @@ COPY . .
 # Compilar TypeScript
 RUN npm run build
 
-EXPOSE 4000
+EXPOSE 4003
 
 CMD ["node", "dist/index.js"]
