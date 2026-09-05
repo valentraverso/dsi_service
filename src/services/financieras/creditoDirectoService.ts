@@ -4,46 +4,56 @@ export class CreditoDirectoService {
     private baseUrl = "https://minegocio.directo.com.ar";
 
     async getActionId(): Promise<string | null> {
-        console.log("[dsi_service] [Directo] Action ID caducado. Levantando navegador táctico en dsi_service...");
+        console.log("[dsi_service] [Directo] 🔍 Obteniendo Action ID vía HTTP del script chunk...");
 
-        let browser;
         try {
-            browser = await puppeteer.launch({
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu'
-                ]
+            const res = await fetch(`${this.baseUrl}/login`, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                }
             });
 
-            const page = await browser.newPage();
-            await page.goto(`${this.baseUrl}/login`, { waitUntil: 'networkidle2' });
+            if (res.ok) {
+                const html = await res.text();
+                const scriptMatch = html.match(/src="([^"]*(?:login\/page-[^"]*\.js))"/i)
+                    || html.match(/src="([^"]*page-[a-f0-9]+\.js)"/i);
 
-            const html = await page.content();
-            const actionIdRegex = /[a-f0-9]{40,50}/g;
-            let match = html.match(actionIdRegex);
+                if (scriptMatch && scriptMatch[1]) {
+                    const scriptPath = scriptMatch[1];
+                    const scriptUrl = scriptPath.startsWith('http')
+                        ? scriptPath
+                        : `${this.baseUrl}${scriptPath.startsWith('/') ? '' : '/'}${scriptPath}`;
 
-            if (match && match.length > 0) {
-                console.log(`[dsi_service] [Directo] Nuevo Action ID robado: ${match[0]}`);
-                return match[0];
+                    const jsRes = await fetch(scriptUrl, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    });
+
+                    if (jsRes.ok) {
+                        const jsContent = await jsRes.text();
+                        const actionRegex = /createServerReference\)\("([a-f0-9]{40,50})"[^)]*?"login"\)/;
+                        const match = jsContent.match(actionRegex);
+
+                        if (match && match[1]) {
+                            console.log(`[dsi_service] [Directo] ✅ Nuevo Action ID extraído del chunk: ${match[1]}`);
+                            return match[1];
+                        }
+                    }
+                }
             }
-
-            console.log("[dsi_service] [Directo] ❌ No se pudo encontrar el Action ID en el HTML.");
-            return null;
+            console.warn("[dsi_service] [Directo] ⚠️ No se pudo extraer el Action ID del script chunk.");
         } catch (error: any) {
-            console.error(`[dsi_service] [Directo] Error en extractor Puppeteer: ${error.message}`);
-            return null;
-        } finally {
-            if (browser) await browser.close();
+            console.error(`[dsi_service] [Directo] Error en extractor HTTP de script chunk: ${error.message}`);
         }
+
+        return "7f2939925dc7ec2ceca1c57964f31a968b95f1a377";
     }
 
     async consultarCredito(numeroCredito: string, customUser?: string, customPass?: string): Promise<{ success: boolean; data?: any; msg?: string }> {
-        const username = (customUser || process.env.DIRECTO_ADMIN_USER || "admmotors").toLowerCase();
-        const pass = customPass || process.env.DIRECTO_ADMIN_PSW || "DIRECTO105";
+        const username = (customUser || process.env.DIRECTO_ADMIN_USER || "").toLowerCase();
+        const pass = customPass || process.env.DIRECTO_ADMIN_PSW || "";
 
         console.log(`[dsi_service] [Directo] Consultando crédito nro: ${numeroCredito} con usuario: ${username}...`);
 
